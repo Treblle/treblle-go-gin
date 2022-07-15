@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"io/ioutil"
 	"net/http"
@@ -32,10 +33,15 @@ func getRequestInfo(r *http.Request, startTime time.Time) (RequestInfo, error) {
 		headers[k] = r.Header.Get(k)
 	}
 
+	var scheme string = "http"
+	if r.URL.Scheme != "" {
+		scheme = "https"
+	}
+
 	ri := RequestInfo{
 		Timestamp: startTime.Format("2006-01-02 15:04:05"),
 		Ip:        r.RemoteAddr,
-		Url:       r.RequestURI,
+		Url:       fmt.Sprintf("%s://%s%s", scheme, r.Host, r.RequestURI),
 		UserAgent: r.UserAgent(),
 		Method:    r.Method,
 		Headers:   headers,
