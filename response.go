@@ -52,12 +52,18 @@ func getGinResponseInfo(blw *BodyLogWriter, c *gin.Context, startTime time.Time)
 		headers[k] = blw.Header().Get(k)
 	}
 
-	return ResponseInfo{
+	r := ResponseInfo{
 		Headers:  headers,
 		Code:     c.Writer.Status(),
 		Size:     len(responseBytes),
 		LoadTime: float64(time.Since(startTime).Microseconds()),
 		Body:     body,
-		Errors:   []ErrorInfo{errInfo},
+		Errors:   make([]ErrorInfo, 0),
 	}
+
+	if err != nil {
+		r.Errors = append(r.Errors, errInfo)
+	}
+
+	return r
 }
