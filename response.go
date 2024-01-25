@@ -9,12 +9,12 @@ import (
 )
 
 type ResponseInfo struct {
-	Headers  map[string]string      `json:"headers"`
-	Code     int                    `json:"code"`
-	Size     int                    `json:"size"`
-	LoadTime float64                `json:"load_time"`
-	Body     map[string]interface{} `json:"body"`
-	Errors   []ErrorInfo            `json:"errors"`
+	Headers  json.RawMessage `json:"headers"`
+	Code     int             `json:"code"`
+	Size     int             `json:"size"`
+	LoadTime float64         `json:"load_time"`
+	Body     json.RawMessage `json:"body"`
+	Errors   []ErrorInfo     `json:"errors"`
 }
 
 type ErrorInfo struct {
@@ -30,15 +30,10 @@ type BodyLogWriter struct {
 	Body *bytes.Buffer
 }
 
-func (w BodyLogWriter) Write(b []byte) (int, error) {
-	w.Body.Write(b)
-	return w.ResponseWriter.Write(b)
-}
-
 // Extract information from Gin body and context
 func getGinResponseInfo(blw *BodyLogWriter, c *gin.Context, startTime time.Time) ResponseInfo {
 	defer dontPanic()
-	responseBytes := []byte(blw.Body.String())
+	responseBytes := blw.Body.Bytes()
 
 	errInfo := ErrorInfo{}
 	var body map[string]interface{}
@@ -48,16 +43,28 @@ func getGinResponseInfo(blw *BodyLogWriter, c *gin.Context, startTime time.Time)
 	}
 
 	headers := make(map[string]string)
-	for k, _ := range blw.Header() {
+	for k := range blw.Header() {
 		headers[k] = blw.Header().Get(k)
 	}
 
+	// headers to Json
+	headersJson, err := json.Marshal(headers)
+	if err != nil {
+		errInfo.Message = err.Error()
+	}
+
+	// body to Json
+	bodyJson, err := json.Marshal(body)
+	if err != nil {
+		errInfo.Message = err.Error()
+	}
+
 	r := ResponseInfo{
-		Headers:  headers,
+		Headers:  headersJson,
 		Code:     c.Writer.Status(),
 		Size:     len(responseBytes),
 		LoadTime: float64(time.Since(startTime).Microseconds()),
-		Body:     body,
+		Body:     bodyJson,
 		Errors:   make([]ErrorInfo, 0),
 	}
 

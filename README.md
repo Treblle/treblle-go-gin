@@ -16,7 +16,7 @@ Trebble uses [Go Modules](https://github.com/golang/go/wiki/Modules) to manage d
 Configure Treblle at the start of your `main()` function:
 
 ```go
-import "github.com/treblle/treblle-go"
+import "github.com/treblle/treblle-go-gin"
 
 func main() {
 	treblle.Configure(treblle.Configuration{
