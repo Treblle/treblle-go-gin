@@ -4,22 +4,23 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
 	"io/ioutil"
+	"net"
 	"net/http"
 	"regexp"
+	"strings"
 	"time"
 )
 
 type RequestInfo struct {
-	Timestamp string                 `json:"timestamp"`
-	Ip        string                 `json:"ip"`
-	Url       string                 `json:"url"`
-	UserAgent string                 `json:"user_agent"`
-	Method    string                 `json:"method"`
-	Headers   map[string]string      `json:"headers"`
-	Body      map[string]interface{} `json:"body"`
+	Timestamp string          `json:"timestamp"`
+	Ip        string          `json:"ip"`
+	Url       string          `json:"url"`
+	UserAgent string          `json:"user_agent"`
+	Method    string          `json:"method"`
+	Headers   json.RawMessage `json:"headers"`
+	Body      json.RawMessage `json:"body"`
 }
 
 var ErrNotJson = errors.New("request body is not JSON")
@@ -29,26 +30,26 @@ func getRequestInfo(r *http.Request, startTime time.Time) (RequestInfo, error) {
 	defer dontPanic()
 
 	headers := make(map[string]string)
-	for k, _ := range r.Header {
+	for k := range r.Header {
 		headers[k] = r.Header.Get(k)
 	}
 
-	var scheme string = "http"
-	if r.URL.Scheme != "" {
-		scheme = "https"
+	protocol := "http"
+	if r.Header.Get("X-Forwarded-Proto") == "https" || r.TLS != nil {
+		protocol = "https"
 	}
+	fullURL := protocol + "://" + r.Host + r.URL.RequestURI()
+	ip := extractIP(r.RemoteAddr)
 
 	ri := RequestInfo{
 		Timestamp: startTime.Format("2006-01-02 15:04:05"),
-		Ip:        r.RemoteAddr,
-		Url:       fmt.Sprintf("%s://%s%s", scheme, r.Host, r.RequestURI),
+		Ip:        ip,
+		Url:       fullURL,
 		UserAgent: r.UserAgent(),
 		Method:    r.Method,
-		Headers:   headers,
 	}
 
 	if r.Body != nil && r.Body != http.NoBody {
-		sanitizedJsonString := make(map[string]interface{})
 		buf, err := ioutil.ReadAll(r.Body)
 		if err != nil {
 			return ri, err
@@ -63,14 +64,26 @@ func getRequestInfo(r *http.Request, startTime time.Time) (RequestInfo, error) {
 			return ri, err
 		}
 
-		// mask all the JSON fields listed in Config.KeysToMask
-		sanitizedJsonString, err = getMaskedJSON(body)
+		// mask all the JSON fields listed in Config.FieldsToMask
+		sanitizedBody, err := getMaskedJSON(body)
 		if err != nil {
 			return ri, err
 		}
 
-		ri.Body = sanitizedJsonString
+		ri.Body = sanitizedBody
+
 	}
+	headersJson, err := json.Marshal(headers)
+	if err != nil {
+		return ri, err
+	}
+
+	sanitizedHeaders, err := getMaskedJSON(headersJson)
+
+	if err != nil {
+		return ri, err
+	}
+	ri.Headers = sanitizedHeaders
 	return ri, nil
 }
 
@@ -78,17 +91,23 @@ func recoverBody(r *http.Request, bodyReaderCopy io.ReadCloser) {
 	r.Body = bodyReaderCopy
 }
 
-func getMaskedJSON(body []byte) (map[string]interface{}, error) {
+func getMaskedJSON(payloadToMask []byte) (json.RawMessage, error) {
 	jsonMap := make(map[string]interface{})
-	if err := json.Unmarshal(body, &jsonMap); err != nil {
-		// not a valid json request
-		return nil, ErrNotJson
+	if err := json.Unmarshal(payloadToMask, &jsonMap); err != nil {
+		// probably a JSON array so let's return it.
+		return payloadToMask, nil
 	}
 
 	sanitizedJson := make(map[string]interface{})
 	copyAndMaskJson(jsonMap, sanitizedJson)
+	jsonData, err := json.Marshal(sanitizedJson)
+	if err != nil {
+		return nil, err
+	}
 
-	return sanitizedJson, nil
+	rawMessage := json.RawMessage(jsonData)
+
+	return rawMessage, nil
 }
 
 func copyAndMaskJson(src map[string]interface{}, dest map[string]interface{}) {
@@ -99,14 +118,39 @@ func copyAndMaskJson(src map[string]interface{}, dest map[string]interface{}) {
 			copyAndMaskJson(src[key].(map[string]interface{}), dest[key].(map[string]interface{}))
 		default:
 			// if JSON key is in the list of keys to mask, replace it with a * string of the same length
-			_, exists := Config.KeysMap[key]
+			_, exists := Config.FieldsMap[key]
 			if exists {
-				re := regexp.MustCompile(".")
-				maskedValue := re.ReplaceAllString(value.(string), "*")
+				maskedValue := maskValue(value.(string), key)
 				dest[key] = maskedValue
 			} else {
 				dest[key] = value
 			}
 		}
 	}
+}
+func maskValue(valueToMask string, key string) string {
+	keyLower := strings.ToLower(key)
+
+	if keyLower == "authorization" && regexp.MustCompile(`(?i)^(bearer|basic)\s+`).MatchString(valueToMask) {
+		authParts := strings.SplitN(valueToMask, " ", 2)
+		authPrefix := authParts[0]
+		authToken := authParts[1]
+		maskedAuthToken := strings.Repeat("*", len(authToken))
+		maskedValue := authPrefix + " " + maskedAuthToken
+		return maskedValue
+	}
+
+	return strings.Repeat("*", len(valueToMask))
+}
+
+func extractIP(remoteAddr string) string {
+	// If RemoteAddr contains both IP and port, split and return the IP
+	if strings.Contains(remoteAddr, ":") {
+		ip, _, err := net.SplitHostPort(remoteAddr)
+		if err == nil {
+			return ip
+		}
+	}
+
+	return remoteAddr
 }

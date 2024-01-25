@@ -10,8 +10,8 @@ import (
 )
 
 const (
-	TreblleVersion = 0.6
-	SdkName        = "go"
+	treblleVersion = "0.7.2"
+	sdkName        = "go"
 )
 
 func GinMiddleware() gin.HandlerFunc {
@@ -29,8 +29,8 @@ func GinMiddleware() gin.HandlerFunc {
 			ti := MetaData{
 				ApiKey:    Config.APIKey,
 				ProjectID: Config.ProjectID,
-				Version:   TreblleVersion,
-				Sdk:       SdkName,
+				Version:   treblleVersion,
+				Sdk:       sdkName,
 				Data: DataInfo{
 					Server:   Config.serverInfo,
 					Language: Config.languageInfo,
